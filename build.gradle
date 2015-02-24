@@ -1,0 +1,98 @@
+//-----------------------------------------------------------------------------
+// 0.1	[FW]	12/17/2014
+//	Initial release of automation build script for T5773 test program 
+//      Recommended command sequence:
+//		gradle init	# copy necessary libs to working directory
+//		gradle build	# compile java and pattern source 
+//		gradle clean	# clean the java and pattern binaries
+//v
+
+apply plugin: 'java'
+compileJava.onlyIf{ dirExists() }
+jar.enabled = false
+assemble.enabled = false
+compileTestJava.enabled = false
+processTestResources.enabled = false
+testClasses.enabled = false
+test.enabled = false
+check.enabled = false
+build.enabled = false
+def LIB_PATH = '/home/kei/lib/'
+
+sourceSets {
+	main {
+		java {
+			srcDirs = [ 'aop', 'javaapi', 'util' ] 
+		}
+		output.classesDir = '.'
+	}
+}
+
+repositories {
+	flatDir {
+		dirs LIB_PATH
+	}			
+};
+
+dependencies {
+	compile name: 't5773'
+	compile name: 'keiSE'
+	compile name: 'MTDataWriter'
+	compile name: 'aspectjrt'
+	compile name: 'aspectjtools'
+}
+
+compileJava {
+	doFirst {
+		options.fork = true
+		options.forkOptions.with {
+			executable = 'java'
+			jvmArgs = [ '-cp', LIB_PATH+'aspectjtools.jar', 'org.aspectj.tools.ajc.Main', '-6']
+		}
+	}
+	doLast {
+		pat.execute()
+	}
+}
+
+clean << {
+	remove()
+	delete 'build'
+}
+
+task init (type: Copy){
+	from( LIB_PATH ) {
+		include 'aop/**/**'
+		include 'util/**/**'
+		include 'org/**/**'
+	}
+	into '.'
+}
+
+task pat(type: Exec){
+	commandLine '/usr/bin/make', '-j', '-C', './pats/'
+}
+
+def remove ( ) {
+	fileTree ( 'javaapi' ) .matching { include '**/*.class' }.each{ delete it }
+	fileTree ( 'util'    ) .matching { include '**/*.class' }.each{ delete it }
+	fileTree ( 'aop'     ) .matching { include '**/*.class' }.each{ delete it }
+	fileTree ( 'pats'    ) .matching { include '**/*.mpa', '**/*.prep' }.each{ delete it }
+}
+
+def dirExists() {
+	boolean has = file('org/aspectj').exists() && file('aop').exists() 
+	if( ! has ) {
+		println "\n" * 64
+		println "======================================"
+		println "Please firstly run :"
+		println "             gradle init"
+		println "======================================"
+	}
+	return has
+}
+
+task ajVersion (type: Exec) {
+	commandLine 'java', '-cp', LIB_PATH+'aspectjtools.jar', 'org.aspectj.tools.ajc.Main', '-version' 
+}
+
