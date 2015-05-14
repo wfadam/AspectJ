@@ -7,45 +7,27 @@ import java.io.*;
 import org.aspectj.lang.JoinPoint;
 
 privileged aspect DieSort extends Advice {
-	final private static int defaultBin = 1; // set when no hit in any ds_bin#.txt
-	final private static int unReadableBin = 7; // set when char is not any of [A-Z0-9.]
-	final private static List<Integer> binArr = new ArrayList<Integer>(){{
-		for( int bin=1; bin<=7; bin++ ) {
-			switch( bin ) {
-				case defaultBin:
-				case unReadableBin:
-					continue;
-				default:
-					add( bin );
-			}
-		}}
-	};
 	final private static boolean[] enableWXYL = { true, true, true, true }; //W,X,Y,LOTID
-	private static Map<Integer, Set<String>> binMap;
+	final private static int unReadableBin = 7; // bin# when any char is not valid
+	final private static int defaultBin = 1; // bin# when no hit in any ds_bin#.txt
 
-	int around(int sbin) : call( * javaapi.Bin.toSort(..)) && args( sbin ) {
-		if( sbin > 8 ) { 
-			return proceed( sbin );// use original bin scramble
-		}
-		return sbin;// directly return soft bin as hard bin
-	}
-
-	before() : call(public void javaapi.TestItem.setCategory() ) && within ( javaapi.TestItem+ ) {
-		if( ! SS.currentTestName.toUpperCase().contains("_DIE_XY_LOC_")) {
-			return;
-		}
+	before() : isTargetTB() && call(public void javaapi.TestItem.setCategory() ) && within ( javaapi.TestItem+ ) {
 		printJP( this, thisJoinPoint );
-		this.binMap = loadBinMap();
 
-		setBin( getUnReadableDut(), unReadableBin);
+		setBin( unReadableBin, getDut( new Filter() {
+					@Override public boolean isMatch( String str ) { return (! isValid( str )); }
+					}));
 
-		for( int bin : binArr ) {
-			List<Integer> dutlst = getDutOfBin( bin );
-			setBin( dutlst, bin);
+		for( int bin : binLst ) {
+			final int b = bin;
+			setBin( bin, getDut( new Filter() {
+						@Override public boolean isMatch( String str ) { return binMap.get( b ).contains( str ); }
+						}));
 		}
 
-		setBin( KTestSystem.getDut( KDutGroupType.CDUT ), defaultBin);
+		setBin( defaultBin, KTestSystem.getDut( KDutGroupType.CDUT ) );
 	}
+
 
 	after() throws NoMoreTargetDutException : call(public void javaapi.TestItem.execute() )  {//forces test program stop
 		if (KTestSystem.getDut(KDutGroupType.MDUT).length == 0) {
@@ -54,33 +36,14 @@ privileged aspect DieSort extends Advice {
 		}
 	}
 
-	final static private List<Integer> getUnReadableDut() {
-		List<Integer> dlst = new ArrayList<Integer>();
-NEXTDUTLP:
-		for( int dut : KTestSystem.getDut( KDutGroupType.CDUT )) {
-			for (int channel = 1; channel <= DeviceInfo.CHANNEL_COUNT; channel++) {
-				for (int chip = 1; chip <= DeviceInfo.MULTIDIECHIPS; chip++) {
-					String wxyL = getWXYLString( dut, channel, chip );
-					if ( ! isValid( wxyL )) {
-						dlst.add( dut );
-						continue NEXTDUTLP;
-					}
-				}
-			}
-		}
-		return dlst;
-	}
-
-	final static private List<Integer> getDutOfBin( int bin ) {
-		Set<String> dsSet = binMap.get( bin );
-
+	final static private List<Integer> getDut( Filter flt ) {
 		List<Integer> dlst = new ArrayList<Integer>();
 NEXTDUT:
 		for( int dut : KTestSystem.getDut( KDutGroupType.CDUT )) {
 			for (int channel = 1; channel <= DeviceInfo.CHANNEL_COUNT; channel++) {
 				for (int chip = 1; chip <= DeviceInfo.MULTIDIECHIPS; chip++) {
 					String wxyL = getWXYLString( dut, channel, chip );
-					if ( dsSet.contains( wxyL )) {
+					if ( flt.isMatch( wxyL )) {
 						dlst.add( dut );
 						continue NEXTDUT;
 					}
@@ -91,63 +54,89 @@ NEXTDUT:
 		return dlst;
 	}
 
-	private static void setBin( int[] tgtDut, int bin) {
+	private static void setBin( int bin, List<Integer> tgtDut ) {
 		for( int dut : tgtDut ) {
-			setBin( dut, bin );
+			setBin( bin, dut );
 		}
 	}
 
-	private static void setBin( List<Integer> tgtDut, int bin) {
+	private static void setBin( int bin, int...tgtDut) {
 		for( int dut : tgtDut ) {
-			setBin( dut, bin );
-		}
-	}
-
-	private static void setBin( int dut, int bin) {
-		//print( "setBin( DUT=%d, bin=%d )\n", dut, bin );
-		try{
-			SS.dutInfo.DUTList[dut - 1].currentTestPF = DUTInfo.PF.PASS;
-			SS.dutInfo.addFailedTest(dut, bin);
-			SS.dutInfo.setSortNumber(dut, bin);
-			KSort.write(dut, bin);
-			DutExclusion.setPermanent(dut);
-		} catch( NoMoreTargetDutException e ) {
-			KDeviceTestProgram dp = KDeviceTestProgram.getCurrent();
-			if ( null != dp ) {
-				((IKNoMoreTargetDutAction)dp).noMoreTargetDutAction();
+			try{
+				SS.dutInfo.DUTList[dut - 1].currentTestPF = DUTInfo.PF.PASS;
+				SS.dutInfo.addFailedTest(dut, bin);
+				SS.dutInfo.setSortNumber(dut, bin);
+				KSort.write(dut, bin);
+				DutExclusion.setPermanent(dut);
+			} catch( NoMoreTargetDutException e ) {
+				KDeviceTestProgram dp = KDeviceTestProgram.getCurrent();
+				if ( null != dp ) {
+					((IKNoMoreTargetDutAction)dp).noMoreTargetDutAction();
+				}
 			}
 		}
 	}
 
-	private static Map<Integer,Set<String>> loadBinMap() {
-		return new HashMap<Integer, Set<String>>(){{
-			for( int bin : binArr ) {
-				put( bin, loadFile( "RandomData/ds_bin"+ bin +".txt" ));
-			}
-		}};
-	}
+	//uses WXYL struct	final static private String getWXYLString( int dut, int channel, int chip ) {
+	//uses WXYL struct		StringBuilder sb = new StringBuilder();
+	//uses WXYL struct		DUTInfo.DUT.LotInfo lot = SS.dutInfo.DUTList[dut - 1].lotInfo;
+	//uses WXYL struct		if( enableWXYL[0] ) {
+	//uses WXYL struct			sb.append( (char)lot.waferNoUpper[channel-1][chip-1] );
+	//uses WXYL struct			sb.append( (char)lot.waferNoLower[channel-1][chip-1] );
+	//uses WXYL struct		}
+	//uses WXYL struct		if( enableWXYL[1] ) {
+	//uses WXYL struct			sb.append( (char)lot.xLocUpper[channel-1][chip-1]    );   
+	//uses WXYL struct			sb.append( (char)lot.xLocLower[channel-1][chip-1]    );   	
+	//uses WXYL struct		}
+	//uses WXYL struct		if( enableWXYL[2] ) {
+	//uses WXYL struct			sb.append( (char)lot.yLocUpper[channel-1][chip-1]    );   
+	//uses WXYL struct			sb.append( (char)lot.yLocLower[channel-1][chip-1]    );   
+	//uses WXYL struct		}
+	//uses WXYL struct		if( enableWXYL[3] ) {
+	//uses WXYL struct			for( int i : lot.lotId[channel-1][chip-1] ) {
+	//uses WXYL struct				sb.append( (char)i );
+	//uses WXYL struct			}
+	//uses WXYL struct		}
+	//uses WXYL struct		return sb.toString().toUpperCase();
+	//uses WXYL struct	}
 
+	//uses new WXYL struct
 	final static private String getWXYLString( int dut, int channel, int chip ) {
-		DUTInfo.DUT.LotInfo lot = SS.dutInfo.DUTList[dut - 1].lotInfo;
 		StringBuilder sb = new StringBuilder();
-		if( enableWXYL[0] ) {
-			sb.append( (char)lot.waferNoUpper[channel-1][chip-1] );
-			sb.append( (char)lot.waferNoLower[channel-1][chip-1] );
+		int[] wxyL = SS.dutInfo.DUTList[dut - 1].wxyL[ chip - 1];
+		if( enableWXYL[0] ) { //w
+			sb.append( (char)wxyL[0] );
+			sb.append( (char)wxyL[1] );
 		}
-		if( enableWXYL[1] ) {
-			sb.append( (char)lot.xLocUpper[channel-1][chip-1]    );   
-			sb.append( (char)lot.xLocLower[channel-1][chip-1]    );   	
+		if( enableWXYL[1] ) { //x
+			sb.append( (char)wxyL[2] );
+			sb.append( (char)wxyL[3] );
 		}
-		if( enableWXYL[2] ) {
-			sb.append( (char)lot.yLocUpper[channel-1][chip-1]    );   
-			sb.append( (char)lot.yLocLower[channel-1][chip-1]    );   
+		if( enableWXYL[2] ) { //y
+			sb.append( (char)wxyL[4] );
+			sb.append( (char)wxyL[5] );
 		}
-		if( enableWXYL[3] ) {
-			for( int i : lot.lotId[channel-1][chip-1] ) {
-				sb.append( (char)i );
+		if( enableWXYL[3] ) { //l
+			for( int i=6; i<wxyL.length; i++ ){
+				sb.append( (char)wxyL[i] );
 			}
 		}
 		return sb.toString().toUpperCase();
+	}
+
+	int around(int sbin) : call( * javaapi.Bin.toSort(..)) && args( sbin ) {
+		if( sbin > 8 ) { 
+			return proceed( sbin );// use original bin scramble
+		}
+		return sbin;
+	}
+
+	final private static Map<Integer,Set<String>> loadBinMap(final List<Integer> blst) {
+		return new HashMap<Integer, Set<String>>(){{
+			for( int bin : blst ) {
+				put( bin, loadFile( "RandomData/ds_bin"+ bin +".txt" ));
+			}
+		}};
 	}
 
 	final static private Set<String> loadFile ( String fName ) {
@@ -160,7 +149,6 @@ NEXTDUT:
 				while( (line=br.readLine()) != null ) {
 					String trimmed = line.replaceAll("[ \t,]+", "");
 					ds.add( trimmed.toUpperCase());
-					//System.out.println( trimmed );
 				}
 				br.close();
 				print("Loaded %s for die sorting\n", fName );
@@ -170,8 +158,25 @@ NEXTDUT:
 		}
 		return ds;
 	}
+
 	final static private boolean isValid( String str ) {
 		return str.matches("[A-Z0-9.]+");
 	}
+
+	interface Filter {
+		public boolean isMatch( String str );
+	}
+
+	final private static List<Integer> binLst = new ArrayList<Integer>(){{
+		for( int bin=1; bin<=7; bin++ ) {
+			switch( bin ) {
+				case defaultBin: case unReadableBin: continue;
+				default: add( bin );
+			}
+		}
+	}};
+	final private static Map<Integer, Set<String>> binMap = loadBinMap(binLst);
+	pointcut isTargetTB() : if( SS.currentTestName.toUpperCase().contains("_DIE_XY_LOC_"));
+
 }
 
