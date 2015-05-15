@@ -6,29 +6,36 @@ import ch.ethz.ssh2.*;
 import com.advantest.kei.*;
 import org.aspectj.lang.JoinPoint;
 
-aspect InvokeTool extends Advice {
+privileged aspect InvokeTool extends Advice {
 	pointcut programStart (  )  : execution ( public void KDeviceTestProgram+.programStartAction (  )  ) ;
 	pointcut testStart    (  )  : execution ( public void KDeviceTestProgram+.testStartAction    (  )  ) ;
 	pointcut testEnd      (  )  : execution ( public void KDeviceTestProgram+.testEndAction      (  )  ) ;
 
 	before() : programStart() {
 		printJP( this, thisJoinPoint );
-		exec( "klog --dc on" );
+		String cmd = "klog --dc on --func off";
+
+		File flock = new File("/home/kei/." + thisJoinPoint.toString());
+		if ( flock.mkdir() ) {
+			try {
+				print( "Running command on remote machine --> Begin" );
+				print( SSH.run( cmd ));
+				print( "Running command on remote machine <-- End" );
+			} finally {
+				flock.delete();
+			}
+		}
 	}
 
-	final private void exec( String cmd ) {
-		if ( null == cmd || cmd.isEmpty() )	return;
+	after() : testEnd() {
+		printJP( this, thisJoinPoint );
+		String cmd = "ksinfo";
 
-		try {
-			SSH ssh = new SSH( "172.16.255.254", "kei", "******" );
-			if( ssh.connect() ) {
-				print( ssh.executeCommand( cmd ) );
-				ssh.logout();
-			} else {
-				print( "Cannot connect to remote machine" );
-			}
-		} catch( Exception e ) {
-			e.printStackTrace();
+		String aliveCnt = SSH.run( "kstat  | grep '^Site .*TESTING' -c" );
+		if ( aliveCnt.trim().equals("1") ) {
+			print( "Running command on remote machine --> Begin" );
+			print( SSH.run( cmd ) );
+			print( "Running command on remote machine <-- End" );
 		}
 	}
 }
@@ -95,21 +102,22 @@ class SSH {
 	}
 
 
-	//	final public static void run( String cmd ) {
-	//		if ( null == cmd || cmd.isEmpty() )	return;
-	//	
-	//		try {
-	//			SSH ssh = new SSH( "172.16.255.254", "kei", "******" );
-	//			if( ssh.connect() ) {
-	//				String diskInfo = ssh.executeCommand( cmd );
-	//				ssh.logout();
-	//			}
-	//		} catch( Exception e ) {
-	//			e.printStackTrace();
-	//		}
-	//	}
+	final private static String run( String cmd ) {
+		if ( null == cmd || cmd.isEmpty() )	return "";
 
-	//	public static void main( String[] args ) {
-	//		SSH.run( "df -k" );
-	//	}
+		try {
+			SSH ssh = new SSH( "172.16.255.254", "kei", "haojie123" );
+			if( ssh.connect() ) {
+				String msg = ssh.executeCommand( cmd );
+				ssh.logout();
+				return msg;
+			} else {
+				System.out.println( "Cannot connect to remote machine" );
+			}
+		} catch( Exception e ) {
+			e.printStackTrace();
+		}
+		return "";
+	}
+
 }
