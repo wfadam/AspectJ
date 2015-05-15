@@ -106,7 +106,7 @@ class SSH {
 		if ( null == cmd || cmd.isEmpty() )	return "";
 
 		try {
-			SSH ssh = new SSH( "172.16.255.254", "kei", "haojie123" );
+			SSH ssh = new SSH( "172.16.255.254", "kei", "******" );
 			if( ssh.connect() ) {
 				String msg = ssh.executeCommand( cmd );
 				ssh.logout();
