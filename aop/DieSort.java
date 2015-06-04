@@ -8,8 +8,11 @@ import org.aspectj.lang.JoinPoint;
 
 privileged aspect DieSort extends Advice {
 	final private static boolean[] enableWXYL = { true, true, true, true }; //W,X,Y,LOTID
-	final private static int unReadableBin = 7; // bin# when any char is not valid
+	final private static int unReadableBin = 4; // bin# when any char is invalid
 	final private static int defaultBin = 1; // bin# when no hit in any ds_bin#.txt
+
+	//insertion for new WXYL struct
+	public int[][] DUTInfo.DUT.wxyL = new int[DeviceInfo.MULTIDIECHIPS][15];//a8w: 2 + 2 + 2 + 9
 
 	before() : isTargetTB() && call(public void javaapi.TestItem.setCategory() ) && within ( javaapi.TestItem+ ) {
 		printJP( this, thisJoinPoint );
@@ -19,15 +22,20 @@ privileged aspect DieSort extends Advice {
 					}));
 
 		for( int bin : binLst ) {
+			if ( binMap.get( bin ).isEmpty() ) continue;// skip if no ds_bin#.txt found
+
 			final int b = bin;
-			setBin( bin, getDut( new Filter() {
+			setBin( b, getDut( new Filter() {
+						// Reject if any match
 						@Override public boolean isMatch( String str ) { return binMap.get( b ).contains( str ); }
+
+						// Reject if any unmatch
+						//m8w@Override public boolean isMatch( String str ) { return ! binMap.get( b ).contains( str ); }
 						}));
 		}
 
 		setBin( defaultBin, KTestSystem.getDut( KDutGroupType.CDUT ) );
 	}
-
 
 	after() throws NoMoreTargetDutException : call(public void javaapi.TestItem.execute() )  {//forces test program stop
 		if (KTestSystem.getDut(KDutGroupType.MDUT).length == 0) {
@@ -54,6 +62,7 @@ NEXTDUT:
 		return dlst;
 	}
 
+
 	private static void setBin( int bin, List<Integer> tgtDut ) {
 		for( int dut : tgtDut ) {
 			setBin( bin, dut );
@@ -61,12 +70,14 @@ NEXTDUT:
 	}
 
 	private static void setBin( int bin, int...tgtDut) {
+
 		for( int dut : tgtDut ) {
 			try{
 				SS.dutInfo.DUTList[dut - 1].currentTestPF = DUTInfo.PF.PASS;
 				SS.dutInfo.addFailedTest(dut, bin);
 				SS.dutInfo.setSortNumber(dut, bin);
 				KSort.write(dut, bin);
+				print ( "DUT%02d is set to hard bin %d\n", dut, bin );
 				DutExclusion.setPermanent(dut);
 			} catch( NoMoreTargetDutException e ) {
 				KDeviceTestProgram dp = KDeviceTestProgram.getCurrent();
