@@ -18,15 +18,10 @@ abstract aspect Advice {
 			buf = null;
 		}
 	}
-
-	public static void print( String fmt, Object...args ) {
-		StringBuilder sb = new StringBuilder();
-		sb.append( prompt );
-		sb.append( String.format(fmt, args));
-
-		System.out.printf( sb.toString() );
-		//buf.append( sb );
-	}
+	
+        public static void print( String fmt, Object...args ) {
+                System.out.printf( prompt + fmt, args );
+        }
 
 	public static void print( Object o ) {
 		if( null == o ) {
